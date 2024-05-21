@@ -12,7 +12,14 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Packages
 
 ```{r packages, warning = FALSE, message = FALSE}
+library(caret)
+library(DataExplorer)
+library(e1071)
+library(ggbiplot)
+library(ggcorrplot)
 library(knitr)
+library(psych)
+library(randomForest)
 library(RColorBrewer)
 library(snakecase)
 library(tidyverse)
@@ -21,26 +28,43 @@ library(tidyverse)
 
 ## Introduction
 
-We load [a dataset of water potability](https://www.kaggle.com/datasets/adityakadiwal/water-potability). Below are the first 10 observations in the dataset.
+We load [a dataset of red wine  quality](https://www.kaggle.com/datasets/uciml/red-wine-quality-cortez-et-al-2009). We will be using this dataset to compare the performance of a couple different classification models, first using all the original features, then using a reduced set of features derived via Principal Component Analysis (PCA).
 
 ```{r data}
 cur_theme <- theme_set(theme_classic())
 pal <- brewer.pal(n = 12, name = "Paired")
-my_url1 <- "https://raw.githubusercontent.com/geedoubledee/data622_homework4/main/water_potability.csv"
-water_potability_df <- read.csv(my_url1)
-cols <- to_screaming_snake_case(colnames(water_potability_df))
-colnames(water_potability_df) <- cols
-water_potability_df <- water_potability_df |>
-    mutate(POTABILITY = factor(POTABILITY)) |>
-    relocate(POTABILITY, .before = PH)
-kable(head(water_potability_df, n = 10), format = "simple")
+my_url1 <- "https://raw.githubusercontent.com/geedoubledee/data622_homework4/main/winequality-red.csv"
+wine_qual_df <- read.csv(my_url1)
+cols <- to_snake_case(colnames(wine_qual_df))
+colnames(wine_qual_df) <- cols
+wine_qual_df <- wine_qual_df |>
+    mutate(ph = p_h) |>
+    select(-p_h) |>
+    relocate(quality, .before = fixed_acidity) |>
+    relocate(ph, .before = sulphates)
 
 ```
 
-The first column is the response variable that we will attempt to predict: a binary factor named `POTABILITY`. A `POTABILITY` value of 0 indicates the water is not drinkable, whereas a `POTABILITY` value of 1 indicates the water is drinkable. In addition to the response variable, there are 9 numeric predictor variables:
+```{r }
+kable(wine_qual_df[1:10, 1:10], format = "simple")
+
+```
+
+Below are the first 10 observations in the dataset, and for the sake of readability, we only display the first 10 columns.
+
+The first column is the response variable that we will attempt to predict: `quality`. Wines were rated on a scale from 0 to 10, as we understand it, but the data doesn't actually include any observations with ratings less than three or higher than eight. We recode `quality` as a binary factor and replace values less than six with "Low" and values greater than or equal to six with "High."
+
+```{r }
+wine_qual_df <- wine_qual_df |>
+    mutate(quality = factor(ifelse(quality < 6, "Low", "High"),
+                            levels = c("Low", "High")))
+
+```
+
+In addition to the response variable, there are 11 numeric predictor variables:
 
 ```{r var_classes}
-classes <- as.data.frame(unlist(lapply(water_potability_df, class))) |>
+classes <- as.data.frame(unlist(lapply(wine_qual_df, class))) |>
     rownames_to_column()
 cols <- c("Variable", "Class")
 colnames(classes) <- cols
@@ -53,15 +77,443 @@ kable(classes_summary, format = "simple")
 
 ```
 
-Descriptions of the metrics these numeric predictor variables measure are below.
+## Exploratory Data Analysis
+
+We check for any missing values within the dataset. 
 
 ```{r }
-var_list <- colnames(water_potability_df |> select(-POTABILITY))
-var_desc <- c("PH is an important parameter in evaluating the acid–base balance of water. It is also the indicator of acidic or alkaline condition of water status. WHO has recommended maximum permissible limit of pH from 6.5 to 8.5. The current investigation ranges were 6.52–6.83 which are in the range of WHO standards.", "Hardness is mainly caused by calcium and magnesium salts. These salts are dissolved from geologic deposits through which water travels. The length of time water is in contact with hardness producing material helps determine how much hardness there is in raw water. Hardness was originally defined as the capacity of water to precipitate soap caused by Calcium and Magnesium.", "Total dissolved solids - TDS. Water has the ability to dissolve a wide range of inorganic and some organic minerals or salts such as potassium, calcium, sodium, bicarbonates, chlorides, magnesium, sulfates etc. These minerals produced un-wanted taste and diluted color in appearance of water. This is the important parameter for the use of water. The water with high TDS value indicates that water is highly mineralized. Desirable limit for TDS is 500 mg/l and maximum limit is 1000 mg/l which prescribed for drinking purpose.", "Chlorine and chloramine are the major disinfectants used in public water systems. Chloramines are most commonly formed when ammonia is added to chlorine to treat drinking water. Chlorine levels up to 4 milligrams per liter (mg/L or 4 parts per million (ppm)) are considered safe in drinking water.", "Sulfates are naturally occurring substances that are found in minerals, soil, and rocks. They are present in ambient air, groundwater, plants, and food. The principal commercial use of sulfate is in the chemical industry. Sulfate concentration in seawater is about 2,700 milligrams per liter (mg/L). It ranges from 3 to 30 mg/L in most freshwater supplies, although much higher concentrations (1000 mg/L) are found in some geographic locations.", "Pure water is not a good conductor of electric current rather’s a good insulator. Increase in ions concentration enhances the electrical conductivity of water. Generally, the amount of dissolved solids in water determines the electrical conductivity. Electrical conductivity (EC) actually measures the ionic process of a solution that enables it to transmit current. According to WHO standards, EC value should not exceeded 400 μS/cm.", "Total Organic Carbon (TOC) in source waters comes from decaying natural organic matter (NOM) as well as synthetic sources. TOC is a measure of the total amount of carbon in organic compounds in pure water. According to US EPA < 2 mg/L as TOC in treated / drinking water, and < 4 mg/Lit in source water which is use for treatment.", "Trihalomethanes (THMs) are chemicals which may be found in water treated with chlorine. The concentration of THMs in drinking water varies according to the level of organic material in the water, the amount of chlorine required to treat the water, and the temperature of the water that is being treated. THM levels up to 80 ppm is considered safe in drinking water.", "The turbidity of water depends on the quantity of solid matter present in the suspended state. It is a measure of light emitting properties of water and the test is used to indicate the quality of waste discharge with respect to colloidal matter. The mean turbidity value obtained for Wondo Genet Campus (0.98 NTU) is lower than the WHO recommended value of 5.00 NTU.")
-var_tbl <- cbind(var_list, var_desc)
-colnames(var_tbl) <- c("VARIABLE", "DESCRIPTION")
-knitr::kable(var_tbl, format = "simple")
+rem <- c("discrete_columns", "continuous_columns",
+         "total_observations", "memory_usage")
+completeness <- introduce(wine_qual_df) |>
+    select(-all_of(rem))
+knitr::kable(t(completeness), format = "simple")
 
 ```
 
+There are no missing values to address in this dataset. We check the distribution of the response variable to see if there's a class imbalance between high-quality wines and low-quality wines.
 
+```{r }
+qual_cols <- pal[c(8, 2)]
+names(qual_cols) <- c("Low", "High")
+obs = nrow(wine_qual_df)
+p1 <- wine_qual_df |>
+    ggplot(aes(x = quality)) +
+    geom_histogram(aes(color = quality, fill = quality), stat = "count") +
+    geom_text(stat = "count", aes(label = paste0(round(
+        after_stat(count) / obs * 100, 1), "%")),
+              size = 5, color = "white", vjust = 2, fontface = "bold") + 
+    scale_color_manual(values = qual_cols) +
+    scale_fill_manual(values = qual_cols) +
+    scale_y_continuous(labels = scales::comma) +
+    labs(title = "Distribution of Low- & High- Quality Wines",
+         y = "COUNT") +
+    theme(legend.position = "none")
+p1
+
+```
+
+There are pretty similar numbers of low-quality and high-quality wines in the dataset, so there is no class imbalance issue to address here. We summarize the distributions of the predictors below.
+
+```{r }
+rem <- c("vars", "n", "trimmed", "mad", "skew", "kurtosis", "se")
+excl <- c("quality*")
+describe <- describe(wine_qual_df) |>
+    select(-all_of(rem))
+describe <- describe |>
+    filter(!rownames(describe) %in% excl)
+knitr::kable(describe, format = "simple")
+
+```
+
+None of the distributions appear degenerate, but we confirm there are no near-zero variance predictors nonetheless.
+
+```{r }
+nzv <- nearZeroVar(wine_qual_df, names = TRUE, saveMetrics = FALSE)
+length(nzv) == 0
+
+```
+
+There are indeed no near-zero variance predictors that we need to remove, so we visualize the distributions for all predictors below.
+
+```{r warning = FALSE, message = FALSE}
+skip <- c("quality")
+wine_qual_piv <- wine_qual_df |>
+    pivot_longer(cols = !all_of(skip), names_to = "PREDICTOR",
+                 values_to = "VALUE")
+p2 <- wine_qual_piv |>
+    ggplot(aes(x = VALUE, color = quality, fill = quality)) +
+    geom_histogram(data = subset(wine_qual_piv, quality == "Low"),
+                   alpha = 0.5) +
+    geom_histogram(data = subset(wine_qual_piv, quality == "High"),
+                   alpha = 0.5) +
+    scale_color_manual(values = qual_cols) +
+    scale_fill_manual(values = qual_cols) +
+    scale_y_continuous(labels = scales::comma) +
+    facet_wrap(PREDICTOR ~ ., ncol = 5, scales = "free_x") +
+    labs(title = "Distribution of Predictors",
+         y = "COUNT") +
+    theme(legend.position = "top")
+p2
+
+```
+
+We can see the means for `alcohol` and `volatile_acidity` are different for low-quality and high-quality wines. We can also see some skewed distributions, but we won't be making any transformations since the focus of our analysis is really whether reducing the feature space improves model performance.
+
+We check for correlations between the predictors and the response variable, as well as any predictor-predictor correlations. In the interest of ignoring clutter, only correlations greater than 0.1 (in absolute value) are displayed.
+
+```{r }
+plot_corr_range <- function(df, mn=0.1, mx=1.0, excl=c(NA)){
+    palette <- brewer.pal(n = 7, name = "RdBu")[c(1, 4, 7)]
+    tit = sprintf("Correlations Between %s and %s (Absolute Value)", mn, mx)
+    r <- model.matrix(~0+., data = df) |>
+        cor() |>
+        round(digits=2)
+    is.na(r) <- abs(r) > mx
+    is.na(r) <- abs(r) < mn
+    if (!is.na(excl)){
+        r <- as.data.frame(r) |>
+            select(-all_of(excl)) |>
+            filter(!rownames(r) %in% excl)
+    }
+    p <- r |>
+        ggcorrplot(show.diag = FALSE, type = "lower", lab = TRUE,
+                   lab_size = 3, tl.cex = 10, tl.srt = 90,
+                   colors = palette, outline.color = "white") +
+        labs(title = tit) +
+        theme(plot.title.position = "plot")
+    p
+}
+excl <- c("qualityLow")
+p3 <- plot_corr_range(df = wine_qual_df, excl = excl)
+p3
+
+```
+
+We see that `alcohol` has the largest positive correlation with high-quality wines, and `volatile_acidity` has the largest negative correlation with high-quality wines. To a lesser degree, `fixed_acidity`, `citric_acid`, and `sulphates` are also positively correlated with high-quality wines, and `chlorides`, `total_sulfur_dioxide`, and `density` are also negatively correlated with high-quality wines. 
+
+We also see high correlations between some of our predictors:
+
+* `fixed_acidity` and `citric_acid` | `density` | `ph`
+
+* `total_sulfur_dioxide` and `free_sulfur_dioxide`
+
+## Data Preparation
+
+We split the data into train and test sets. 
+
+```{r }
+set.seed(1006)
+sample <- sample(nrow(wine_qual_df),
+                 round(nrow(wine_qual_df) * 0.7),
+                 replace = FALSE)
+train_df <- wine_qual_df[sample, ]
+test_df <- wine_qual_df[-sample, ]
+
+```
+
+We confirm the class distributions are similar in the original, train, and test sets.
+
+```{r }
+dist1 <- as.data.frame(round(prop.table(table(select(wine_qual_df, quality))), 2))
+colnames(dist1) <- c("Quality", "Original Freq")
+dist2 <- as.data.frame(round(prop.table(table(select(train_df, quality))), 2))
+colnames(dist2) <- c("Quality", "Train Freq")
+dist3 <- as.data.frame(round(prop.table(table(select(test_df, quality))), 2))
+colnames(dist3) <- c("Quality", "Test Freq")
+class_dist <- dist1 |>
+    left_join(dist2, by = join_by(Quality)) |>
+    left_join(dist3, by = join_by(Quality))
+kable(class_dist, format = "simple")
+
+```
+
+The class distributions are all pretty similar.
+
+## Model Building
+
+We build our first set of models: a Random Forest model and a Support Vector Machine model using all the original features. 
+
+### Random Forest Model (Original Features):
+
+A summary of the relative importance of the original features to the Random Forest model we have trained is below.
+
+```{r }
+rf_orig <- train(quality ~ ., data = train_df, metric = "Accuracy",
+                method = "rf", trControl = trainControl(method = "none"),
+                tuneGrid = expand.grid(.mtry = 3))
+rf_orig_imp <- varImp(rf_orig, scale = TRUE)
+rf_orig_imp <- rf_orig_imp$importance |>
+    rownames_to_column()
+cols <- c("Predictor", "Importance")
+colnames(rf_orig_imp) <- cols
+rf_orig_imp <- rf_orig_imp |>
+    arrange(desc(Importance))
+kable(rf_orig_imp, format = "simple")
+
+```
+
+Unsurprisingly, the Random Forest model estimates `alcohol` to be the most important feature for predicting the response variable. We deduced that from our correlation plot. The relative importance estimate for `residual_sugar`` is 0, indicating it was not used in any of the trees. 
+
+### Support Vector Machine Model (Original Features):
+
+A summary of the best Support Vector Machine model using a radial basis kernel that we arrived at during tuning is below:
+
+```{r }
+ctrl <-  tune.control(sampling = "cross", cross = 10, nrepeat = 5)
+tune_grid <- list(cost = c(0.1, 1, 10, 100, 1000),
+                  gamma = c(0.5, 1, 2, 3, 4))
+svm_tune_orig <- tune(svm, quality ~ .,
+                      data = train_df, kernel = "radial",
+                      ranges = tune_grid, tunecontrol = ctrl)
+svm_orig <- svm_tune_orig$best.model
+summarize_svm <- function(svm_model){
+    col1 <- c("call", "cost", "gamma", "num_classes", "classes",
+              "support_vectors_total", "support_vectors_split")
+    subset <- c("call", "cost", "gamma", "nclasses", "levels",
+              "tot.nSV", "nSV")
+    col2 <- svm_model[subset]
+    copy <- col2
+    for (i in 1:length(copy)){
+        if (is.vector(copy[[i]])){
+            col2[[i]] <- paste(col2[[i]], collapse = ", ")
+        }
+    }
+    summ <- as.data.frame(cbind(col1, col2))
+    rownames(summ) <- NULL
+    colnames(summ) <- c("Parameter", "Value")
+    summ
+}
+summ <- summarize_svm(svm_orig)
+kable(summ, format = "simple")
+
+```
+
+It uses a cost of 1 and a gamma of 0.5. 
+
+We now perform PCA. First, we check the mean and variance of all predictors to confirm we need to center and scale them. 
+
+```{r }
+mean_df <- round(as.data.frame(apply(wine_qual_df |> select(-quality), 2, mean)), 2)
+colnames(mean_df) <- c("Mean")
+mean_df <- mean_df |>
+    rownames_to_column(var = "Predictor")
+var_df <- round(as.data.frame(apply(wine_qual_df |> select(-quality), 2, var)), 2)
+colnames(var_df) <- c("Variance")
+var_df <- var_df |>
+    rownames_to_column(var = "Predictor")
+mean_var_df <- mean_df |>
+    left_join(var_df, by = join_by(Predictor))
+kable(mean_var_df, format = "simple")
+
+```
+
+Both `free_sulfur_dioxide` and `total_sulfur_dioxide` exhibit much larger variance than the other variables, so we center and scale them to prevent them from dominating the principal components. Below is the rotation, ie. the matrix of variable loadings.
+
+```{r }
+pca.out = prcomp(wine_qual_df |> select(-quality), scale = TRUE)
+kable(round(as.data.frame(pca.out$rotation), 2), format = "simple")
+
+```
+
+We generate a scree plot so that we can see the variance explained by each principal component. 
+
+```{r }
+scree_plot_df = as.data.frame(pca.out$sdev^2 / sum(pca.out$sdev^2))
+colnames(scree_plot_df) = c("var_explained")
+scree_plot_df <- scree_plot_df |>
+    rowid_to_column(var = "pc")
+p4 <- scree_plot_df |>
+    ggplot(aes(x = pc, y = var_explained)) +
+    geom_line() + 
+    geom_point(size = 2) +
+    scale_x_continuous(limits = c(1, 11), breaks = seq(1, 11, 1)) +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.1)) +
+    labs(x = "Principal Component",
+         y = "Variance Explained",
+         title = "Scree Plot")
+p4
+
+```
+
+The first principal component explains a little less than 30 percent of the variance in our data, and the second principal component explains a little less than 20 percent of the variance in our data. Since those values are relatively low, we don't expect building models using only the first two principal components will be sufficient, so we will go up to six principal components.
+
+For the same reason, we don't expect the biplot of the first two principal components we generate below to show great separation between high-quality and low-quality wines.
+
+```{r }
+p5 <- pca.out |>
+    ggbiplot(obs.scale = 1, var.scale = 1,
+             groups = wine_qual_df$quality,
+             ellipse = TRUE) +
+    theme(legend.direction = "horizontal",
+          legend.position = "top") +
+    labs(fill = "Quality", color = "Quality") +
+    scale_color_discrete(type = qual_cols)
+p5
+
+```
+
+Indeed, there is a lot of overlap in low-quality and high-quality wines plotted by just the first two principal components, but we do see some separation between the classes, which is promising.
+
+We create new versions of the train and test sets using the features derived via PCA instead of the original features.
+
+```{r }
+train_df_pca <- as.data.frame(predict(pca.out, train_df)) |>
+    bind_cols(train_df |> select(quality)) |>
+    relocate(quality, .before = "PC1")
+test_df_pca <- as.data.frame(predict(pca.out, test_df)) |>
+    bind_cols(test_df |> select(quality)) |>
+    relocate(quality, .before = "PC1")
+
+```
+
+Then we build our second set of models: a Random Forest model and a Support Vector Machine model using six principal components.
+
+### Random Forest Models (Principal Components):
+
+A summary of the relative importance of the six principal components to the Random Forest model we have trained is below.
+
+```{r }
+rf_6pc <- train(quality ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6,
+                data = train_df_pca, metric = "Accuracy",
+                method = "rf", trControl = trainControl(method = "none"),
+                tuneGrid = expand.grid(.mtry = 3))
+rf_6pc_imp <- varImp(rf_6pc, scale = TRUE)
+rf_6pc_imp <- rf_6pc_imp$importance |>
+    rownames_to_column()
+cols <- c("Predictor", "Importance")
+colnames(rf_6pc_imp) <- cols
+rf_6pc_imp <- rf_6pc_imp |>
+    arrange(desc(Importance))
+kable(rf_6pc_imp, format = "simple")
+
+```
+
+Note that the Random Forest model using six principal components considers the second principal component relatively more important than the first. The sixth principal component has a relative importance estimate of 0, indicating it was not used in any of the trees. 
+
+### Support Vector Machine Models (Principal Components):
+
+A summary of the best Support Vector Machine model using a radial basis kernel and six principal components that we arrived at during tuning is below:
+
+```{r }
+svm_tune_6pc <- tune(svm, quality ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6,
+                      data = train_df_pca, kernel = "radial",
+                      ranges = tune_grid, tunecontrol = ctrl)
+svm_6pc <- svm_tune_6pc$best.model
+summ <- summarize_svm(svm_6pc)
+kable(summ, format = "simple")
+
+
+```
+
+It uses a cost of 3 and a gamma of 2. 
+
+## Model Evaluation
+
+We make predictions on the test data using all four models, and we construct confusion matrices and calculate a variety of performance metrics for them. 
+
+First, we look at the confusion matrices for each of the models.
+
+```{r cm_plot}
+#Random Forest Orig: predictions/confusion matrix
+pred_rf_orig <- predict(rf_orig, test_df)
+rf_orig_cm_complete <- confusionMatrix(pred_rf_orig, test_df$quality,
+                                       positive = "High")
+rf_orig_cm <- as.data.frame(rf_orig_cm_complete$table)
+rf_orig_cm$Reference <- factor(rf_orig_cm$Reference,
+                               levels = rev(levels(rf_orig_cm$Reference)))
+rf_orig_cm <- rf_orig_cm |>
+    mutate(
+        Label = case_when(
+            Prediction == "Low" & Reference == "Low" ~ "TN",
+            Prediction == "High" & Reference == "High" ~ "TP",
+            Prediction == "Low" & Reference == "High" ~ "FN",
+            Prediction == "High" & Reference == "Low" ~ "FP"),
+        Model = "Random Forest Model (Original Features)")
+#Random Forest 6PC: predictions/confusion matrix
+pred_rf_6pc <- predict(rf_6pc, test_df_pca)
+rf_6pc_cm_complete <- confusionMatrix(pred_rf_6pc, test_df_pca$quality,
+                                      positive = "High")
+rf_6pc_cm <- as.data.frame(rf_6pc_cm_complete$table)
+rf_6pc_cm$Reference <- factor(rf_6pc_cm$Reference,
+                               levels = rev(levels(rf_6pc_cm$Reference)))
+rf_6pc_cm <- rf_6pc_cm |>
+    mutate(
+        Label = case_when(
+            Prediction == "Low" & Reference == "Low" ~ "TN",
+            Prediction == "High" & Reference == "High" ~ "TP",
+            Prediction == "Low" & Reference == "High" ~ "FN",
+            Prediction == "High" & Reference == "Low" ~ "FP"),
+        Model = "Random Forest Model (Principal Components)")
+#Support Vector Machine Orig: predictions/confusion matrix
+pred_svm_orig <- predict(svm_orig, test_df, type = "class")
+svm_orig_cm_complete <- confusionMatrix(pred_svm_orig, test_df$quality,
+                                       positive = "High")
+svm_orig_cm <- as.data.frame(svm_orig_cm_complete$table)
+svm_orig_cm$Reference <- factor(svm_orig_cm$Reference,
+                               levels = rev(levels(svm_orig_cm$Reference)))
+svm_orig_cm <- svm_orig_cm |>
+    mutate(
+        Label = case_when(
+            Prediction == "Low" & Reference == "Low" ~ "TN",
+            Prediction == "High" & Reference == "High" ~ "TP",
+            Prediction == "Low" & Reference == "High" ~ "FN",
+            Prediction == "High" & Reference == "Low" ~ "FP"),
+        Model = "Support Vector Machine Model (Original Features)")
+#Support Vector Machine 6PC: predictions/confusion matrix
+pred_svm_6pc <- predict(svm_6pc, test_df_pca, type = "class")
+svm_6pc_cm_complete <- confusionMatrix(pred_svm_6pc, test_df_pca$quality,
+                                       positive = "High")
+svm_6pc_cm <- as.data.frame(svm_6pc_cm_complete$table)
+svm_6pc_cm$Reference <- factor(svm_6pc_cm$Reference,
+                               levels = rev(levels(svm_6pc_cm$Reference)))
+svm_6pc_cm <- svm_6pc_cm |>
+    mutate(
+        Label = case_when(
+            Prediction == "Low" & Reference == "Low" ~ "TN",
+            Prediction == "High" & Reference == "High" ~ "TP",
+            Prediction == "Low" & Reference == "High" ~ "FN",
+            Prediction == "High" & Reference == "Low" ~ "FP"),
+        Model = "Support Vector Machine Model (Principal Components)")
+cm <- bind_rows(rf_orig_cm, rf_6pc_cm, svm_orig_cm, svm_6pc_cm)
+p6 <- cm |>
+    ggplot(aes(x = Reference, y = Prediction, fill = Freq)) +
+    geom_tile(col = "black") +
+    geom_text(aes(label = Freq)) +
+    geom_text(aes(label = Label), vjust = 3) + 
+    scale_fill_gradient(low = "white", high = pal[4]) +
+    scale_x_discrete(position = "top") +
+    facet_wrap(Model ~ ., ncol = 2, strip.position = "bottom") +
+    labs(title = "Confusion Matrices for All Models") +
+    theme(axis.line.x = element_blank(),
+          axis.line.y = element_blank(),
+          axis.text.y = element_text(angle = 90, hjust = 0.5),
+          axis.ticks = element_blank(),
+          legend.position = "bottom",
+          strip.placement = "outside")
+p6
+
+```
+
+Then we calculate the performance metrics for each of the models.
+
+```{r }
+metrics <- as.data.frame(cbind(rbind(rf_orig_cm_complete$byClass,
+                                     rf_6pc_cm_complete$byClass,
+                                     svm_orig_cm_complete$byClass,
+                                     svm_6pc_cm_complete$byClass),
+                               rbind(rf_orig_cm_complete$overall,
+                                     rf_6pc_cm_complete$overall,
+                                     svm_orig_cm_complete$overall,
+                                     svm_6pc_cm_complete$overall)))
+rownames(metrics) <- c("Random Forest Model (Original Features)",
+                       "Random Forest Model (Principal Components)",
+                       "Support Vector Machine Model (Original Features)",
+                       "Support Vector Machine Model (Principal Components)")
+keep <- c("Accuracy", "Precision", "Recall", "F1")
+metrics <- metrics |>
+    select(all_of(keep)) |>
+    round(3)
+kable(metrics, format = "simple")
+
+
+```
