@@ -28,11 +28,11 @@ library(tidyverse)
 
 ## Introduction
 
-We load [a dataset of red wine  quality](https://www.kaggle.com/datasets/uciml/red-wine-quality-cortez-et-al-2009). We will be using this dataset to compare the performance of a couple different classification models, first using all the original features, then using a reduced set of features derived via Principal Component Analysis (PCA).
+We load [a dataset of red wine  quality](https://www.kaggle.com/datasets/uciml/red-wine-quality-cortez-et-al-2009). We will be using this dataset to compare the performance of a couple different classification models, first using all the original features, then using a reduced set of features derived via Principal Component Analysis (PCA). This will give us insight into how much the feature space can be reduced without losing predictive power, and we may even see predictive gains. 
 
 ```{r data}
 cur_theme <- theme_set(theme_classic())
-pal <- brewer.pal(n = 12, name = "Paired")
+pal <- brewer.pal(n = 8, name = "Dark2")
 my_url1 <- "https://raw.githubusercontent.com/geedoubledee/data622_homework4/main/winequality-red.csv"
 wine_qual_df <- read.csv(my_url1)
 cols <- to_snake_case(colnames(wine_qual_df))
@@ -45,14 +45,14 @@ wine_qual_df <- wine_qual_df |>
 
 ```
 
+Below are the first 10 observations in the dataset, and for the sake of readability, we only display the first 10 columns.
+
 ```{r }
 kable(wine_qual_df[1:10, 1:10], format = "simple")
 
 ```
 
-Below are the first 10 observations in the dataset, and for the sake of readability, we only display the first 10 columns.
-
-The first column is the response variable that we will attempt to predict: `quality`. Wines were rated on a scale from 0 to 10, as we understand it, but the data doesn't actually include any observations with ratings less than three or higher than eight. We recode `quality` as a binary factor and replace values less than six with "Low" and values greater than or equal to six with "High."
+The first column is the response variable that we will attempt to predict: `quality`. Wines were rated on a scale from 0 to 10, but the dataset doesn't actually include any observations with ratings less than three or higher than eight. We recode `quality` as a binary factor and replace values less than six with "Low" and values greater than or equal to six with "High."
 
 ```{r }
 wine_qual_df <- wine_qual_df |>
@@ -92,8 +92,8 @@ knitr::kable(t(completeness), format = "simple")
 
 There are no missing values to address in this dataset. We check the distribution of the response variable to see if there's a class imbalance between high-quality wines and low-quality wines.
 
-```{r }
-qual_cols <- pal[c(8, 2)]
+```{r warning = FALSE, message = FALSE}
+qual_cols <- pal[c(2, 3)]
 names(qual_cols) <- c("Low", "High")
 obs = nrow(wine_qual_df)
 p1 <- wine_qual_df |>
@@ -106,6 +106,7 @@ p1 <- wine_qual_df |>
     scale_fill_manual(values = qual_cols) +
     scale_y_continuous(labels = scales::comma) +
     labs(title = "Distribution of Low- & High- Quality Wines",
+         x = "QUALITY",
          y = "COUNT") +
     theme(legend.position = "none")
 p1
@@ -157,13 +158,13 @@ p2
 
 ```
 
-We can see the means for `alcohol` and `volatile_acidity` are different for low-quality and high-quality wines. We can also see some skewed distributions, but we won't be making any transformations since the focus of our analysis is really whether reducing the feature space improves model performance.
+We can see the means for `alcohol` and `volatile_acidity` are different for low-quality and high-quality wines. We can also see some skewed distributions, but we won't be making any transformations since the focus of our analysis is really what impact reducing the feature space has on model performance.
 
 We check for correlations between the predictors and the response variable, as well as any predictor-predictor correlations. In the interest of ignoring clutter, only correlations greater than 0.1 (in absolute value) are displayed.
 
 ```{r }
 plot_corr_range <- function(df, mn=0.1, mx=1.0, excl=c(NA)){
-    palette <- brewer.pal(n = 7, name = "RdBu")[c(1, 4, 7)]
+    palette <- brewer.pal(n = 7, name = "BrBG")[c(1, 4, 7)]
     tit = sprintf("Correlations Between %s and %s (Absolute Value)", mn, mx)
     r <- model.matrix(~0+., data = df) |>
         cor() |>
@@ -196,6 +197,8 @@ We also see high correlations between some of our predictors:
 * `fixed_acidity` and `citric_acid` | `density` | `ph`
 
 * `total_sulfur_dioxide` and `free_sulfur_dioxide`
+
+Note that we won't be eliminating any predictors from consideration for the same reason we aren't doing any transformations: we are more interested in seeing what effects reducing the feature space from all the original features to just principal components has than anything else.
 
 ## Data Preparation
 
@@ -233,14 +236,20 @@ The class distributions are all pretty similar.
 
 We build our first set of models: a Random Forest model and a Support Vector Machine model using all the original features. 
 
-### Random Forest Model (Original Features):
+### Random Forest Model (Original Features)
 
 A summary of the relative importance of the original features to the Random Forest model we have trained is below.
 
 ```{r }
-rf_orig <- train(quality ~ ., data = train_df, metric = "Accuracy",
-                method = "rf", trControl = trainControl(method = "none"),
-                tuneGrid = expand.grid(.mtry = 3))
+fn <- "rf_orig.rds"
+if (!file.exists(fn)){
+    rf_orig <- train(quality ~ ., data = train_df, metric = "Accuracy",
+                     method = "rf", trControl = trainControl(method = "none"),
+                     tuneGrid = expand.grid(.mtry = 3))
+    saveRDS(rf_orig, fn)
+}else{
+    rf_orig <- readRDS(fn)
+}
 rf_orig_imp <- varImp(rf_orig, scale = TRUE)
 rf_orig_imp <- rf_orig_imp$importance |>
     rownames_to_column()
@@ -254,18 +263,24 @@ kable(rf_orig_imp, format = "simple")
 
 Unsurprisingly, the Random Forest model estimates `alcohol` to be the most important feature for predicting the response variable. We deduced that from our correlation plot. The relative importance estimate for `residual_sugar`` is 0, indicating it was not used in any of the trees. 
 
-### Support Vector Machine Model (Original Features):
+### Support Vector Machine Model (Original Features)
 
-A summary of the best Support Vector Machine model using a radial basis kernel that we arrived at during tuning is below:
+A summary of the best Support Vector Machine model using a radial basis kernel and the original features that we arrived at during tuning is below:
 
 ```{r }
 ctrl <-  tune.control(sampling = "cross", cross = 10, nrepeat = 5)
-tune_grid <- list(cost = c(0.1, 1, 10, 100, 1000),
-                  gamma = c(0.5, 1, 2, 3, 4))
-svm_tune_orig <- tune(svm, quality ~ .,
-                      data = train_df, kernel = "radial",
-                      ranges = tune_grid, tunecontrol = ctrl)
-svm_orig <- svm_tune_orig$best.model
+    tune_grid <- list(cost = c(0.1, 1, 10, 100, 1000),
+                      gamma = c(0.5, 1, 2, 3, 4))
+fn <- "svm_orig.rds"
+if (!file.exists(fn)){
+    svm_tune_orig <- tune(svm, quality ~ .,
+                          data = train_df, kernel = "radial",
+                          ranges = tune_grid, tunecontrol = ctrl)
+    svm_orig <- svm_tune_orig$best.model
+    saveRDS(svm_orig, fn)
+}else{
+    svm_orig <- readRDS(fn)
+}
 summarize_svm <- function(svm_model){
     col1 <- c("call", "cost", "gamma", "num_classes", "classes",
               "support_vectors_total", "support_vectors_split")
@@ -289,6 +304,8 @@ kable(summ, format = "simple")
 ```
 
 It uses a cost of 1 and a gamma of 0.5. 
+
+### Principal Component Analysis (PCA)
 
 We now perform PCA. First, we check the mean and variance of all predictors to confirm we need to center and scale them. 
 
@@ -335,7 +352,7 @@ p4
 
 ```
 
-The first principal component explains a little less than 30 percent of the variance in our data, and the second principal component explains a little less than 20 percent of the variance in our data. Since those values are relatively low, we don't expect building models using only the first two principal components will be sufficient, so we will go up to six principal components.
+The first principal component explains a little less than 30 percent of the variance in our data, and the second principal component explains a little less than 20 percent of the variance in our data. Since those values are relatively low, we don't expect building models using only the first two principal components will be sufficient, so we will go up to eight principal components.
 
 For the same reason, we don't expect the biplot of the first two principal components we generate below to show great separation between high-quality and low-quality wines.
 
@@ -343,10 +360,13 @@ For the same reason, we don't expect the biplot of the first two principal compo
 p5 <- pca.out |>
     ggbiplot(obs.scale = 1, var.scale = 1,
              groups = wine_qual_df$quality,
-             ellipse = TRUE) +
+             ellipse = TRUE,
+             ellipse.alpha = 0.0) +
     theme(legend.direction = "horizontal",
           legend.position = "top") +
-    labs(fill = "Quality", color = "Quality") +
+    labs(fill = "Quality",
+         color = "Quality",
+         title = "Biplot of First Two Principal Components") +
     scale_color_discrete(type = qual_cols)
 p5
 
@@ -366,50 +386,183 @@ test_df_pca <- as.data.frame(predict(pca.out, test_df)) |>
 
 ```
 
-Then we build our second set of models: a Random Forest model and a Support Vector Machine model using six principal components.
+Then we build our second set of models: Random Forest and Support Vector Machine models using the first two, first four, first six, or first eight principal components.
 
-### Random Forest Models (Principal Components):
+### Random Forest Model (Principal Components)
 
-A summary of the relative importance of the six principal components to the Random Forest model we have trained is below.
+First, we train four Random Forest models using increasing numbers of principal components. 
 
 ```{r }
-rf_6pc <- train(quality ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6,
-                data = train_df_pca, metric = "Accuracy",
-                method = "rf", trControl = trainControl(method = "none"),
-                tuneGrid = expand.grid(.mtry = 3))
+fn <- "rf_2pc.rds"
+if (!file.exists(fn)){
+    rf_2pc <- train(quality ~ PC1 + PC2,
+                    data = train_df_pca, metric = "Accuracy",
+                    method = "rf", trControl = trainControl(method = "none"),
+                    tuneGrid = expand.grid(.mtry = 1))
+    saveRDS(rf_2pc, fn)
+}else{
+    rf_2pc <- readRDS(fn)
+}
+fn <- "rf_4pc.rds"
+if (!file.exists(fn)){
+    rf_4pc <- train(quality ~ PC1 + PC2 + PC3 + PC4,
+                    data = train_df_pca, metric = "Accuracy",
+                    method = "rf", trControl = trainControl(method = "none"),
+                    tuneGrid = expand.grid(.mtry = 2))
+    saveRDS(rf_4pc, fn)
+}else{
+    rf_4pc <- readRDS(fn)
+}
+fn <- "rf_6pc.rds"
+if (!file.exists(fn)){
+    rf_6pc <- train(quality ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6,
+                    data = train_df_pca, metric = "Accuracy",
+                    method = "rf", trControl = trainControl(method = "none"),
+                    tuneGrid = expand.grid(.mtry = 2))
+    saveRDS(rf_6pc, fn)
+}else{
+    rf_6pc <- readRDS(fn)
+}
+fn <- "rf_8pc.rds"
+if (!file.exists(fn)){
+    rf_8pc <- train(quality ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8,
+                    data = train_df_pca, metric = "Accuracy",
+                    method = "rf", trControl = trainControl(method = "none"),
+                    tuneGrid = expand.grid(.mtry = 2))
+    saveRDS(rf_8pc, fn)
+}else{
+    rf_8pc <- readRDS(fn)
+}
+
+```
+
+A summary of the relative importance of the principal components to each of these Random Forest models we have trained is below.
+
+```{r }
+rf_2pc_imp <- varImp(rf_2pc, scale = TRUE)
+rf_2pc_imp <- rf_2pc_imp$importance |>
+    rownames_to_column()
+cols <- c("Predictor", "Importance")
+colnames(rf_2pc_imp) <- cols
+rf_2pc_imp <- rf_2pc_imp |>
+    arrange(desc(Importance)) |>
+    rowid_to_column(var = "Rank") |>
+    mutate(Model = "Random Forest (2 Principal Components)") |>
+    select(-Importance)
+rf_4pc_imp <- varImp(rf_4pc, scale = TRUE)
+rf_4pc_imp <- rf_4pc_imp$importance |>
+    rownames_to_column()
+cols <- c("Predictor", "Importance")
+colnames(rf_4pc_imp) <- cols
+rf_4pc_imp <- rf_4pc_imp |>
+    arrange(desc(Importance)) |>
+    rowid_to_column(var = "Rank") |>
+    mutate(Model = "Random Forest (4 Principal Components)") |>
+    select(-Importance)
 rf_6pc_imp <- varImp(rf_6pc, scale = TRUE)
 rf_6pc_imp <- rf_6pc_imp$importance |>
     rownames_to_column()
 cols <- c("Predictor", "Importance")
 colnames(rf_6pc_imp) <- cols
 rf_6pc_imp <- rf_6pc_imp |>
-    arrange(desc(Importance))
-kable(rf_6pc_imp, format = "simple")
+    arrange(desc(Importance)) |>
+    rowid_to_column(var = "Rank") |>
+    mutate(Model = "Random Forest (6 Principal Components)") |>
+    select(-Importance)
+rf_8pc_imp <- varImp(rf_8pc, scale = TRUE)
+rf_8pc_imp <- rf_8pc_imp$importance |>
+    rownames_to_column()
+cols <- c("Predictor", "Importance")
+colnames(rf_8pc_imp) <- cols
+rf_8pc_imp <- rf_8pc_imp |>
+    arrange(desc(Importance)) |>
+    rowid_to_column(var = "Rank") |>
+    mutate(Model = "Random Forest (8 Principal Components)") |>
+    select(-Importance)
+rf_pc_imp_df <- rf_2pc_imp |>
+    bind_rows(rf_4pc_imp, rf_6pc_imp, rf_8pc_imp) |>
+    pivot_wider(names_from = Rank, values_from = Predictor,
+                names_prefix = "Rank_")
+kable(rf_pc_imp_df, format = "simple")
 
 ```
 
-Note that the Random Forest model using six principal components considers the second principal component relatively more important than the first. The sixth principal component has a relative importance estimate of 0, indicating it was not used in any of the trees. 
+All of these Random Forest models rank the second principal component as their most important feature, and most of them rank the third principal component as their second-most important feature. Only the Random Forest model built using only the first two principal components includes the first principal component in its top two features.
 
-### Support Vector Machine Models (Principal Components):
+### Support Vector Machine Model (Principal Components)
 
-A summary of the best Support Vector Machine model using a radial basis kernel and six principal components that we arrived at during tuning is below:
+Next we train four Support Vector Machine models using increasing numbers of principal components. Summaries of the best Support Vector Machine models using radial basis kernels that we arrived at during tuning are below:
 
 ```{r }
-svm_tune_6pc <- tune(svm, quality ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6,
-                      data = train_df_pca, kernel = "radial",
-                      ranges = tune_grid, tunecontrol = ctrl)
-svm_6pc <- svm_tune_6pc$best.model
-summ <- summarize_svm(svm_6pc)
+fn <- "svm_2pc.rds"
+if (!file.exists(fn)){
+    svm_tune_2pc <- tune(svm, quality ~ PC1 + PC2,
+                         data = train_df_pca, kernel = "radial",
+                         ranges = tune_grid, tunecontrol = ctrl)
+    svm_2pc <- svm_tune_2pc$best.model
+    saveRDS(svm_2pc, fn)
+}else{
+    svm_2pc <- readRDS(fn)
+}
+fn <- "svm_4pc.rds"
+if (!file.exists(fn)){
+    svm_tune_4pc <- tune(svm, quality ~ PC1 + PC2 + PC3 + PC4,
+                         data = train_df_pca, kernel = "radial",
+                         ranges = tune_grid, tunecontrol = ctrl)
+    svm_4pc <- svm_tune_4pc$best.model
+    saveRDS(svm_4pc, fn)
+}else{
+    svm_4pc <- readRDS(fn)
+}
+fn <- "svm_6pc.rds"
+if (!file.exists(fn)){
+    svm_tune_6pc <- tune(svm, quality ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6,
+                         data = train_df_pca, kernel = "radial",
+                         ranges = tune_grid, tunecontrol = ctrl)
+    svm_6pc <- svm_tune_6pc$best.model
+    saveRDS(svm_6pc, fn)
+}else{
+    svm_6pc <- readRDS(fn)
+}
+fn <- "svm_8pc.rds"
+if (!file.exists(fn)){
+    svm_tune_8pc <- tune(svm,
+                         quality ~ PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8,
+                         data = train_df_pca, kernel = "radial",
+                         ranges = tune_grid, tunecontrol = ctrl)
+    svm_8pc <- svm_tune_8pc$best.model
+    saveRDS(svm_8pc, fn)
+}else{
+    svm_8pc <- readRDS(fn)
+}
+summ_2pc <- summarize_svm(svm_2pc) |>
+    filter(Parameter != "call") |>
+    mutate(Model = "Support Vector Machine (2 Principal Components)") |>
+    pivot_wider(names_from = Parameter, values_from = Value)
+summ_4pc <- summarize_svm(svm_4pc) |>
+    filter(Parameter != "call") |>
+    mutate(Model = "Support Vector Machine (4 Principal Components)") |>
+    pivot_wider(names_from = Parameter, values_from = Value)
+summ_6pc <- summarize_svm(svm_6pc) |>
+    filter(Parameter != "call") |>
+    mutate(Model = "Support Vector Machine (6 Principal Components)") |>
+    pivot_wider(names_from = Parameter, values_from = Value)
+summ_8pc <- summarize_svm(svm_8pc) |>
+    filter(Parameter != "call") |>
+    mutate(Model = "Support Vector Machine (8 Principal Components)") |>
+    pivot_wider(names_from = Parameter, values_from = Value)
+summ <- summ_2pc |>
+    bind_rows(summ_4pc, summ_6pc, summ_8pc)
 kable(summ, format = "simple")
 
 
 ```
 
-It uses a cost of 3 and a gamma of 2. 
+They use various costs between 0.1 and 10, but they all use the same gamma: 0.5.
 
 ## Model Evaluation
 
-We make predictions on the test data using all four models, and we construct confusion matrices and calculate a variety of performance metrics for them. 
+We make predictions on the test data using all models, and we construct confusion matrices and calculate a variety of performance metrics for them. 
 
 First, we look at the confusion matrices for each of the models.
 
@@ -428,8 +581,38 @@ rf_orig_cm <- rf_orig_cm |>
             Prediction == "High" & Reference == "High" ~ "TP",
             Prediction == "Low" & Reference == "High" ~ "FN",
             Prediction == "High" & Reference == "Low" ~ "FP"),
-        Model = "Random Forest Model (Original Features)")
-#Random Forest 6PC: predictions/confusion matrix
+        Model = "RF (Orig. Feat.)")
+#Random Forest 2pc: predictions/confusion matrix
+pred_rf_2pc <- predict(rf_2pc, test_df_pca)
+rf_2pc_cm_complete <- confusionMatrix(pred_rf_2pc, test_df_pca$quality,
+                                      positive = "High")
+rf_2pc_cm <- as.data.frame(rf_2pc_cm_complete$table)
+rf_2pc_cm$Reference <- factor(rf_2pc_cm$Reference,
+                               levels = rev(levels(rf_2pc_cm$Reference)))
+rf_2pc_cm <- rf_2pc_cm |>
+    mutate(
+        Label = case_when(
+            Prediction == "Low" & Reference == "Low" ~ "TN",
+            Prediction == "High" & Reference == "High" ~ "TP",
+            Prediction == "Low" & Reference == "High" ~ "FN",
+            Prediction == "High" & Reference == "Low" ~ "FP"),
+        Model = "RF (2 PC)")
+#Random Forest 4pc: predictions/confusion matrix
+pred_rf_4pc <- predict(rf_4pc, test_df_pca)
+rf_4pc_cm_complete <- confusionMatrix(pred_rf_4pc, test_df_pca$quality,
+                                      positive = "High")
+rf_4pc_cm <- as.data.frame(rf_4pc_cm_complete$table)
+rf_4pc_cm$Reference <- factor(rf_4pc_cm$Reference,
+                               levels = rev(levels(rf_4pc_cm$Reference)))
+rf_4pc_cm <- rf_4pc_cm |>
+    mutate(
+        Label = case_when(
+            Prediction == "Low" & Reference == "Low" ~ "TN",
+            Prediction == "High" & Reference == "High" ~ "TP",
+            Prediction == "Low" & Reference == "High" ~ "FN",
+            Prediction == "High" & Reference == "Low" ~ "FP"),
+        Model = "RF (4 PC)")
+#Random Forest 6pc: predictions/confusion matrix
 pred_rf_6pc <- predict(rf_6pc, test_df_pca)
 rf_6pc_cm_complete <- confusionMatrix(pred_rf_6pc, test_df_pca$quality,
                                       positive = "High")
@@ -443,7 +626,22 @@ rf_6pc_cm <- rf_6pc_cm |>
             Prediction == "High" & Reference == "High" ~ "TP",
             Prediction == "Low" & Reference == "High" ~ "FN",
             Prediction == "High" & Reference == "Low" ~ "FP"),
-        Model = "Random Forest Model (Principal Components)")
+        Model = "RF (6 PC)")
+#Random Forest 8pc: predictions/confusion matrix
+pred_rf_8pc <- predict(rf_8pc, test_df_pca)
+rf_8pc_cm_complete <- confusionMatrix(pred_rf_8pc, test_df_pca$quality,
+                                      positive = "High")
+rf_8pc_cm <- as.data.frame(rf_8pc_cm_complete$table)
+rf_8pc_cm$Reference <- factor(rf_8pc_cm$Reference,
+                               levels = rev(levels(rf_8pc_cm$Reference)))
+rf_8pc_cm <- rf_8pc_cm |>
+    mutate(
+        Label = case_when(
+            Prediction == "Low" & Reference == "Low" ~ "TN",
+            Prediction == "High" & Reference == "High" ~ "TP",
+            Prediction == "Low" & Reference == "High" ~ "FN",
+            Prediction == "High" & Reference == "Low" ~ "FP"),
+        Model = "RF (8C)")
 #Support Vector Machine Orig: predictions/confusion matrix
 pred_svm_orig <- predict(svm_orig, test_df, type = "class")
 svm_orig_cm_complete <- confusionMatrix(pred_svm_orig, test_df$quality,
@@ -458,8 +656,38 @@ svm_orig_cm <- svm_orig_cm |>
             Prediction == "High" & Reference == "High" ~ "TP",
             Prediction == "Low" & Reference == "High" ~ "FN",
             Prediction == "High" & Reference == "Low" ~ "FP"),
-        Model = "Support Vector Machine Model (Original Features)")
-#Support Vector Machine 6PC: predictions/confusion matrix
+        Model = "SVM (Orig. Feat.)")
+#Support Vector Machine 2pc: predictions/confusion matrix
+pred_svm_2pc <- predict(svm_2pc, test_df_pca, type = "class")
+svm_2pc_cm_complete <- confusionMatrix(pred_svm_2pc, test_df_pca$quality,
+                                       positive = "High")
+svm_2pc_cm <- as.data.frame(svm_2pc_cm_complete$table)
+svm_2pc_cm$Reference <- factor(svm_2pc_cm$Reference,
+                               levels = rev(levels(svm_2pc_cm$Reference)))
+svm_2pc_cm <- svm_2pc_cm |>
+    mutate(
+        Label = case_when(
+            Prediction == "Low" & Reference == "Low" ~ "TN",
+            Prediction == "High" & Reference == "High" ~ "TP",
+            Prediction == "Low" & Reference == "High" ~ "FN",
+            Prediction == "High" & Reference == "Low" ~ "FP"),
+        Model = "SVM (2 PC)")
+#Support Vector Machine 4pc: predictions/confusion matrix
+pred_svm_4pc <- predict(svm_4pc, test_df_pca, type = "class")
+svm_4pc_cm_complete <- confusionMatrix(pred_svm_4pc, test_df_pca$quality,
+                                       positive = "High")
+svm_4pc_cm <- as.data.frame(svm_4pc_cm_complete$table)
+svm_4pc_cm$Reference <- factor(svm_4pc_cm$Reference,
+                               levels = rev(levels(svm_4pc_cm$Reference)))
+svm_4pc_cm <- svm_4pc_cm |>
+    mutate(
+        Label = case_when(
+            Prediction == "Low" & Reference == "Low" ~ "TN",
+            Prediction == "High" & Reference == "High" ~ "TP",
+            Prediction == "Low" & Reference == "High" ~ "FN",
+            Prediction == "High" & Reference == "Low" ~ "FP"),
+        Model = "SVM (4 PC)")
+#Support Vector Machine 6pc: predictions/confusion matrix
 pred_svm_6pc <- predict(svm_6pc, test_df_pca, type = "class")
 svm_6pc_cm_complete <- confusionMatrix(pred_svm_6pc, test_df_pca$quality,
                                        positive = "High")
@@ -473,16 +701,32 @@ svm_6pc_cm <- svm_6pc_cm |>
             Prediction == "High" & Reference == "High" ~ "TP",
             Prediction == "Low" & Reference == "High" ~ "FN",
             Prediction == "High" & Reference == "Low" ~ "FP"),
-        Model = "Support Vector Machine Model (Principal Components)")
-cm <- bind_rows(rf_orig_cm, rf_6pc_cm, svm_orig_cm, svm_6pc_cm)
+        Model = "SVM (6 PC)")
+#Support Vector Machine 8pc: predictions/confusion matrix
+pred_svm_8pc <- predict(svm_8pc, test_df_pca, type = "class")
+svm_8pc_cm_complete <- confusionMatrix(pred_svm_8pc, test_df_pca$quality,
+                                       positive = "High")
+svm_8pc_cm <- as.data.frame(svm_8pc_cm_complete$table)
+svm_8pc_cm$Reference <- factor(svm_8pc_cm$Reference,
+                               levels = rev(levels(svm_8pc_cm$Reference)))
+svm_8pc_cm <- svm_8pc_cm |>
+    mutate(
+        Label = case_when(
+            Prediction == "Low" & Reference == "Low" ~ "TN",
+            Prediction == "High" & Reference == "High" ~ "TP",
+            Prediction == "Low" & Reference == "High" ~ "FN",
+            Prediction == "High" & Reference == "Low" ~ "FP"),
+        Model = "SVM (8 PC)")
+cm <- bind_rows(rf_orig_cm, rf_2pc_cm, rf_4pc_cm, rf_6pc_cm, rf_8pc_cm,
+                svm_orig_cm, svm_2pc_cm, svm_4pc_cm, svm_6pc_cm, svm_8pc_cm)
 p6 <- cm |>
     ggplot(aes(x = Reference, y = Prediction, fill = Freq)) +
     geom_tile(col = "black") +
     geom_text(aes(label = Freq)) +
-    geom_text(aes(label = Label), vjust = 3) + 
-    scale_fill_gradient(low = "white", high = pal[4]) +
+    geom_text(aes(label = Label), vjust = 2) + 
+    scale_fill_gradient(low = "white", high = pal[1]) +
     scale_x_discrete(position = "top") +
-    facet_wrap(Model ~ ., ncol = 2, strip.position = "bottom") +
+    facet_wrap(Model ~ ., ncol = 5, strip.position = "bottom") +
     labs(title = "Confusion Matrices for All Models") +
     theme(axis.line.x = element_blank(),
           axis.line.y = element_blank(),
@@ -498,22 +742,47 @@ Then we calculate the performance metrics for each of the models.
 
 ```{r }
 metrics <- as.data.frame(cbind(rbind(rf_orig_cm_complete$byClass,
+                                     rf_2pc_cm_complete$byClass,
+                                     rf_4pc_cm_complete$byClass,
                                      rf_6pc_cm_complete$byClass,
+                                     rf_8pc_cm_complete$byClass,
                                      svm_orig_cm_complete$byClass,
-                                     svm_6pc_cm_complete$byClass),
+                                     svm_2pc_cm_complete$byClass,
+                                     svm_4pc_cm_complete$byClass,
+                                     svm_6pc_cm_complete$byClass,
+                                     svm_8pc_cm_complete$byClass),
                                rbind(rf_orig_cm_complete$overall,
+                                     rf_2pc_cm_complete$overall,
+                                     rf_4pc_cm_complete$overall,
                                      rf_6pc_cm_complete$overall,
+                                     rf_8pc_cm_complete$overall,
                                      svm_orig_cm_complete$overall,
-                                     svm_6pc_cm_complete$overall)))
-rownames(metrics) <- c("Random Forest Model (Original Features)",
-                       "Random Forest Model (Principal Components)",
-                       "Support Vector Machine Model (Original Features)",
-                       "Support Vector Machine Model (Principal Components)")
+                                     svm_2pc_cm_complete$overall,
+                                     svm_4pc_cm_complete$overall,
+                                     svm_6pc_cm_complete$overall,
+                                     svm_8pc_cm_complete$overall)))
+rownames(metrics) <- c("Random Forest (Original Features)",
+                       "Random Forest (2 Principal Components)",
+                       "Random Forest (4 Principal Components)",
+                       "Random Forest (6 Principal Components)",
+                       "Random Forest (8 Principal Components)",
+                       "Support Vector Machine (Original Features)",
+                       "Support Vector Machine (2 Principal Components)",
+                       "Support Vector Machine (4 Principal Components)",
+                       "Support Vector Machine (6 Principal Components)",
+                       "Support Vector Machine (8 Principal Components)")
 keep <- c("Accuracy", "Precision", "Recall", "F1")
 metrics <- metrics |>
     select(all_of(keep)) |>
     round(3)
 kable(metrics, format = "simple")
 
-
 ```
+
+## Conclusion
+
+Both the Random Forest and Support Vector Machine models perform best on this dataset using the original features rather than any number of principal components. Using only four principal components does get the Random Forest model close to the Accuracy and F1 Score of the Random Forest model using the original features though. The Support Vector Machine model, in contrast, requires twice as many, i.e. eight, principal components to get close to the Accuracy and F1 Score of the Support Vector Machine model using the original features. 
+
+Since we only had eleven numeric predictors in the dataset to begin with, reducing the feature space wasn't really imperative, but we now have a framework for performing PCA on datasets with tons of features, where reducing the feature space is more necessary. 
+
+There are often a lot of benefits to reducing the feature space, especially when businesses track a lot of features for the products they sell. Jeans in particular come to mind as a product with lots of features (i.e. color, size, fit, style, stretch, whether it has a button-fly or a zipper, whether it comes distressed, etc.). If you can represent a product line with lots of features like that with just four or fewer principal components instead, you will be eliminating a lot of noise, your models will be faster, and your predictions can be as good as or better than predictions from models that use more features. It's also amazing to be able to see data with many dimensions reduced to two dimensions, even in a classification problem like ours where we knew perfect wine quality class separation wouldn't be visible in just two dimensions.
