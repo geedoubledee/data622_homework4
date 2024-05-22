@@ -786,3 +786,7 @@ Both the Random Forest and Support Vector Machine models perform best on this da
 Since we only had eleven numeric predictors in the dataset to begin with, reducing the feature space wasn't really imperative, but we now have a framework for performing PCA on datasets with tons of features, where reducing the feature space is more necessary. 
 
 There are often a lot of benefits to reducing the feature space, especially when businesses track a lot of features for the products they sell. Jeans in particular come to mind as a product with lots of features (i.e. color, size, fit, style, stretch, whether it has a button-fly or a zipper, whether it comes distressed, etc.). If you can represent a product line with lots of features like that with just four or fewer principal components instead, you will be eliminating a lot of noise, your models will be faster, and your predictions can be as good as or better than predictions from models that use more features. It's also amazing to be able to see data with many dimensions reduced to two dimensions, even in a classification problem like ours where we knew perfect wine quality class separation wouldn't be visible in just two dimensions.
+
+## Video Presentation
+
+You can [view the video presentation here](https://www.loom.com/share/159611fb4e10455b8f188e35f6e38dfd?sid=c987cc44-747d-4364-8fe9-26a7e5d55bce){target="_blank"}.
